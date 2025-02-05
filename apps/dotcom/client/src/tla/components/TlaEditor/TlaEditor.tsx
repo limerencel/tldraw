@@ -1,13 +1,11 @@
-import { TlaFileOpenState } from '@tldraw/dotcom-shared'
 import { useSync } from '@tldraw/sync'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import {
 	Editor,
 	TLComponents,
 	TLSessionStateSnapshot,
 	TLUiDialogsContextType,
 	Tldraw,
-	assert,
 	createSessionStateSnapshotSignal,
 	react,
 	throttle,
@@ -28,6 +26,7 @@ import { useMaybeApp } from '../../hooks/useAppState'
 import { ReadyWrapper, useSetIsReady } from '../../hooks/useIsReady'
 import { useTldrawUser } from '../../hooks/useUser'
 import { maybeSlurp } from '../../utils/slurping'
+import { PreviewWelcomeDialog, RemountImagesContext } from './PreviewWelcomeDialog'
 import { SneakyDarkModeSync } from './SneakyDarkModeSync'
 import { TlaEditorWrapper } from './TlaEditorWrapper'
 import { TlaEditorErrorFallback } from './editor-components/TlaEditorErrorFallback'
@@ -46,18 +45,16 @@ export const components: TLComponents = {
 	MenuPanel: TlaEditorMenuPanel,
 	TopPanel: TlaEditorTopPanel,
 	SharePanel: TlaEditorSharePanel,
+	Dialogs: null,
+	Toasts: null,
 }
 
 interface TlaEditorProps {
 	fileSlug: string
-	fileOpenState?: TlaFileOpenState
 	deepLinks?: boolean
 }
 
 export function TlaEditor(props: TlaEditorProps) {
-	if (props.fileOpenState?.mode === 'duplicate') {
-		assert(props.fileOpenState.duplicateId, 'duplicateId is required when mode is duplicate')
-	}
 	// force re-mount when the file slug changes to prevent state from leaking between files
 	return (
 		<>
@@ -69,10 +66,9 @@ export function TlaEditor(props: TlaEditorProps) {
 	)
 }
 
-function TlaEditorInner({ fileSlug, fileOpenState, deepLinks }: TlaEditorProps) {
+function TlaEditorInner({ fileSlug, deepLinks }: TlaEditorProps) {
 	const handleUiEvent = useHandleUiEvents()
 	const app = useMaybeApp()
-	const mode = fileOpenState?.mode
 
 	const fileId = fileSlug
 
@@ -145,21 +141,19 @@ function TlaEditorInner({ fileSlug, fileOpenState, deepLinks }: TlaEditorProps) 
 				remountImageShapes,
 			}).then(setIsReady)
 
-			if (mode === 'slurp-legacy-file') {
-				assert(fileOpenState?.snapshot, 'snapshot is required when mode is slurp-legacy-file')
-				editor.loadSnapshot(fileOpenState.snapshot)
-			}
-
 			return () => {
 				abortController.abort()
 				cleanup()
 				updateSessionState.cancel()
 			}
 		},
-		[addDialog, app, fileId, fileOpenState, mode, remountImageShapes, setIsReady]
+		[addDialog, app, fileId, remountImageShapes, setIsReady]
 	)
 
 	const user = useTldrawUser()
+	const assets = useMemo(() => {
+		return multiplayerAssetStore(() => fileId)
+	}, [fileId])
 
 	const store = useSync({
 		uri: useCallback(async () => {
@@ -167,17 +161,9 @@ function TlaEditorInner({ fileSlug, fileOpenState, deepLinks }: TlaEditorProps) 
 			if (user) {
 				url.searchParams.set('accessToken', await user.getToken())
 			}
-			if (mode) {
-				url.searchParams.set('mode', mode)
-				if (mode === 'duplicate') {
-					const duplicateId = fileOpenState.duplicateId
-					assert(duplicateId, 'duplicateId is required when mode is duplicate')
-					url.searchParams.set('duplicateId', duplicateId)
-				}
-			}
 			return url.toString()
-		}, [fileSlug, user, mode, fileOpenState]),
-		assets: multiplayerAssetStore,
+		}, [fileSlug, user]),
+		assets,
 		userInfo: app?.tlUser.userPreferences,
 	})
 
@@ -235,6 +221,10 @@ function TlaEditorInner({ fileSlug, fileOpenState, deepLinks }: TlaEditorProps) 
 				<SneakyDarkModeSync />
 				{app && <SneakyTldrawFileDropHandler />}
 				<SneakyFileUpdateHandler fileId={fileId} />
+				{/* Temporary junk for making the preview experience a bit better */}
+				<RemountImagesContext.Provider value={remountImageShapes}>
+					<PreviewWelcomeDialog />
+				</RemountImagesContext.Provider>
 			</Tldraw>
 		</TlaEditorWrapper>
 	)
